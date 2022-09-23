@@ -1,0 +1,531 @@
+Linux系统RHEL7源码编译安装Zabbix6
+
+@[TOC](文章目录)
+# 前言
+<font color=#999AAA >
+最近客户项目要求，本文基于Linux系统RHEL7源码编译安装Zabbix6，详细的部署分享给大家
+<hr style=" border:solid; width:100px; height:1px;" color=#000000 size=1">
+
+
+## 📢 1.环境准备
+
+```bash
+1.源码包下载
+下载地址：https://cdn.zabbix.com/zabbix/sources/stable/6.2/zabbix-6.2.2.tar.gz
+
+2.关闭防火墙和 selinux 并重启
+如果selinux没有关闭执行：
+[root@localhost ~]# sed -i 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
+
+[root@localhost ~]# systemctl disable --now firewalld
+Removed symlink /etc/systemd/system/multi-user.target.wants/firewalld.service.
+Removed symlink /etc/systemd/system/dbus-org.fedoraproject.FirewallD1.service.
+
+[root@localhost ~]# systemctl status firewalld
+   
+
+3.hostname设置
+[root@localhost ~]# cat /etc/redhat-release
+Red Hat Enterprise Linux Server release 7.4 (Maipo)
+
+[root@localhost ~]# hostnamectl set-hostname jeames
+
+
+4.HOST解析
+[root@jeames ~]# vi /etc/hosts
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+## 添加以下内容
+192.168.1.30 jeames
+```
+
+
+## 📢 2 配置本地yum
+
+```bash
+本次我们运用挂载本地光盘镜像的方法
+1.创建挂载目录
+[root@jeames ~]# df -TH
+Filesystem            Type      Size  Used Avail Use% Mounted on
+/dev/mapper/rhel-root xfs        19G  4.0G   15G  22% /
+devtmpfs              devtmpfs  2.0G     0  2.0G   0% /dev
+tmpfs                 tmpfs     2.0G     0  2.0G   0% /dev/shm
+tmpfs                 tmpfs     2.0G  9.6M  2.0G   1% /run
+tmpfs                 tmpfs     2.0G     0  2.0G   0% /sys/fs/cgroup
+/dev/sda1             xfs       1.1G  187M  877M  18% /boot
+tmpfs                 tmpfs     396M   25k  396M   1% /run/user/0
+tmpfs                 tmpfs     396M  8.2k  396M   1% /run/user/42
+/dev/sr0              iso9660   4.1G  4.1G     0 100% /run/media/root/RHEL-7.4 Server.x86_64
+
+[root@jeames ~]# mkdir -p /mnt/dvd/
+
+2.挂载光盘到目录
+[root@rhel76 ~]# mount /dev/sr0 /mnt/dvd
+mount: /dev/sr0 is write-protected, mounting read-only
+
+3.将RHEL7的yum替换为Centos的源
+## 查询原有rpm包
+[root@jeames ~]# rpm -qa | grep yum
+PackageKit-yum-1.1.5-1.el7.x86_64
+yum-3.4.3-154.el7.noarch
+yum-rhn-plugin-2.0.1-9.el7.noarch
+yum-utils-1.1.31-42.el7.noarch
+yum-metadata-parser-1.1.4-10.el7.x86_64
+yum-langpacks-0.4.2-7.el7.noarch
+
+## 删除原有的yum源
+[root@jeames ~]# rpm -qa|grep yum|xargs rpm -e --nodeps
+
+## CentOS yum源配置
+[root@jeames /]# cp /etc/yum.repos.d/redhat.repo /etc/yum.repos.d/redhat.repo.bak
+cat >> /etc/yum.repos.d/CentOS.repo << "EOF"
+[rhel7]
+name=jemrepo
+baseurl=file:///mnt/dvd/
+gpgcheck=0
+EOF
+
+[root@jeames /]# yum repolist
+
+## 安装Centos7 yum所需的所有rpm包
+[root@jeames ~]# rpm -ivh yum-3.4.3-168.el7.centos.noarch.rpm --nodeps
+[root@jeames ~]# rpm -ivh yum-plugin-fastestmirror-1.1.31-54.el7_8.noarch.rpm --nodeps
+[root@jeames ~]# rpm -ivh yum-metadata-parser-1.1.4-10.el7.x86_64.rpm
+
+[root@jeames /]# rpm -qa | grep yum
+yum-3.4.3-168.el7.centos.noarch
+yum-plugin-fastestmirror-1.1.31-54.el7_8.noarch
+yum-metadata-parser-1.1.4-10.el7.x86_64
+```
+## 📢 3 源码编译Server
+
+```bash
+1.安装依赖
+[root@jeames /]# yum install -y libevent-devel net-snmp-devel
+[root@jeames /]# yum install libxml2 libxml2-devel -y
+[root@jeames /]# yum -y install unixODBC unixODBC-devel
+[root@jeames /]# yum -y install curl-devel
+[root@jeames ~]# yum install openssl-devel pcre-devel libssh2-devel OpenIPMI-devel  openldap-devel
+[root@jeames /]# yum -y install gcc gcc-c++
+[root@jeames /]# gcc -v
+[root@jeames ~]# yum -y install mysql-devel
+
+2.创建用户组等，授权
+[root@jeames /]# groupadd --system zabbix
+[root@jeames /]# useradd --system -g zabbix -d /usr/lib/zabbix -s /sbin/nologin -c "Zabbix Monitoring System" zabbix
+
+3.解压源码包
+[root@jeames ~]# tar -zxvf zabbix-6.2.2.tar.gz
+
+4.编译安装
+注意以下都是在zabbix的安装目录下执行
+[root@jeames /]# cd zabbix-6.2.2
+[root@jeames /]# ./configure --enable-server --enable-agent --with-mysql \
+--enable-ipv6 --with-net-snmp --with-libcurl --with-libxml2 --with-openipmi --with-unixodbc
+最后编译
+[zabbix@jeames zabbix-6.2.2]# make install
+```
+![在这里插入图片描述](https://img-blog.csdnimg.cn/5365c2c951f14cf19f550bae375124dc.png)
+![在这里插入图片描述](https://img-blog.csdnimg.cn/04358b2d205a4bf78581dff9d74a7a48.png)
+## 📢 4 编译安装PHP
+
+```bash
+# 官网地址 
+https://www.php.net/downloads
+
+
+# 安装简单依赖
+yum remove php* -y
+yum install autoconf automake libtool sqlite-devel libjpeg-devel libpng-devel freetype-devel -y
+
+
+[root@jeames ~]# tar xf php-7.4.9.tar.gz
+[root@jeames ~]# useradd -s /sbin/nologin -M php
+[root@jeames ~]# cd php-7.4.9
+
+## 记得导入环境变量
+export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig/"
+
+./configure --prefix=/usr/local/php7 --with-config-file-path=/usr/local/php7/etc --with-mhash --with-openssl --with-mysqli=mysqlnd --with-pdo-mysql=mysqlnd --with-zlib --enable-bcmath  --enable-gd --with-freetype  --enable-mbstring --enable-ftp --enable-sockets   --with-gettext --enable-session --with-curl  --enable-fpm --with-fpm-user=php --with-fpm-group=php  \
+--enable-pdo -enable-tokenizer --with-zip --with-jpeg
+
+## 编译，这个时间比较长
+make -j4 && make install
+```
+![在这里插入图片描述](https://img-blog.csdnimg.cn/e69b4a55f60f423f9faa7ba300144c65.png)
+![在这里插入图片描述](https://img-blog.csdnimg.cn/e3f8c5d5bff946888c807217d229b41f.png)
+
+```bash
+#配置文件改名
+cd /usr/local/php7/etc/
+cp php-fpm.conf.default php-fpm.conf
+cp php-fpm.d/www.conf.default php-fpm.d/www.conf
+#php命令设置软链接
+ln -s /usr/local/php7/bin/* /usr/local/bin
+ln -s /usr/local/php7/sbin/* /usr/local/sbin
+#查看php的版本
+[root@jeames etc]# php -v
+PHP 7.4.9 (cli) (built: Sep 17 2022 23:51:00) ( NTS )
+Copyright (c) The PHP Group
+Zend Engine v3.4.0, Copyright (c) Zend Technologies
+
+#杀死当前php进程，重启
+killall php-fpm
+php-fpm
+netstat -antp | grep php-fpm
+tail -f /usr/local/php7/var/log/php-fpm.log
+netstat -tln | grep 9000
+netstat -tln | grep 80
+
+#安装ldap扩展模块
+[root@jeames ~]# cd /root/php-7.4.9/ext/ldap
+[root@jeames ldap]# find / -name phpize
+/root/php-7.4.9/scripts/phpize
+/usr/local/bin/phpize
+
+#运行phpize
+[root@jeames ldap]# /usr/local/php7/bin/phpize
+Configuring for:
+PHP Api Version:         20190902
+Zend Module Api No:      20190902
+Zend Extension Api No:   320190902
+
+#复制库文件
+cp -frp /usr/lib64/libldap* /usr/lib/
+
+#安装至/usr/local/php7/bin/php-config
+[root@jeames ldap]# ./configure --with-php-config=/usr/local/php7/bin/php-config
+
+#编译安装
+[root@jeames ldap]#  make && make install
+
+#修改参数
+cd /root/php-7.4.9
+cp php.ini-production /usr/local/php7/etc/php.ini
+
+vim /usr/local/php7/etc/php.ini
+
+extension_dir = "/usr/local/php7/lib/php/extensions/no-debug-non-zts-20190902/"
+extension=ldap.so
+
+max_execution_time = 300
+post_max_size = 16M
+max_input_time = 300
+date.timezone = Asia/Shanghai  
+```
+
+## 📢 5 创建初始数据库
+MySQL数据库用来给 Zabbix Server，提供数据存储，本次采用二进制包安装MySQL8.0
+
+### ✨ 5.1 安裝MySQL8
+```bash
+1. 卸载MariaDB，避免mariadb和mysql数据库冲突
+[root@jeames zabbix-6.2.2]# rpm -qa |grep mariadb
+mariadb-devel-5.5.56-2.el7.x86_64
+mariadb-libs-5.5.56-2.el7.x86_64
+
+[root@jeames zabbix-6.2.2]# rpm -e --nodeps mariadb-libs-5.5.56-2.el7.x86_64
+[root@jeames zabbix-6.2.2]# rpm -e --nodeps mariadb-devel-5.5.56-2.el7.x86_64
+
+2.用户及目录创建
+root 用户操作：
+mkdir -p /mysql/data/mysql3306
+mkdir -p /mysql/app/
+mkdir -p /mysql/conf/
+mkdir -p /mysql/data/mysql3306/pid/
+mkdir -p /mysql/data/mysql3306/socket/
+mkdir -p /mysql/data/mysql3306/log/
+mkdir -p /mysql/data/mysql3306/binlog/
+mkdir -p /mysql/data/mysql3306/errlog
+mkdir -p /mysql/data/mysql3306/relaylog/
+mkdir -p /mysql/data/mysql3306/slowlog/
+mkdir -p /mysql/data/mysql3306/tmp/
+
+
+3.用户及组
+[root@jeames ~]# groupadd mysql
+[root@jeames ~]# useradd -g mysql mysql
+[root@jeames ~]# chown -R mysql:mysql /mysql
+[root@jeames ~]# chmod 775 -R /mysql
+
+userdel -r mysql   --删除 lamp 用户
+groupdel mysql --删除组users
+
+
+#上传软件包并解压
+[root@jeames ~]# cp mysql-8.0.27-linux-glibc2.12-x86_64.tar.xz /mysql/app
+[root@jeames ~]# chown -R mysql:mysql /mysql
+[root@jeames ~]# chmod 775 -R /mysql
+
+
+4.mysql用户操作
+[root@jeames ~]# su - mysql
+[mysql@jeames ~]$ cd /mysql/app
+## 解压软件包并重命名
+[mysql@jeames app]$ tar xvf mysql-8.0.27-linux-glibc2.12-x86_64.tar.xz
+[mysql@jeames app]$ mv mysql-8.0.27-linux-glibc2.12-x86_64 mysql8.0.27
+
+##环境变量配置
+cat >> /home/mysql/.bash_profile << "EOF"
+MYSQL_HOME=/mysql/app/mysql8.0.27
+PATH=$PATH:$MYSQL_HOME/bin
+EOF
+
+[mysql@jeames app]$ source ~/.bash_profile
+[mysql@jeames app]$ which mysql
+/mysql/app/mysql8.0.27/bin/mysql
+
+## 创建参数文件
+cat >> /mysql/conf/my3306.cnf << "EOF"
+[mysqld]
+server_id = 80273306
+default-storage-engine= InnoDB
+basedir=/mysql/app/mysql8.0.27
+datadir=/mysql/data/mysql3306/data/
+socket=/tmp/mysql.sock
+log-error=/mysql/data/mysql3306/log/mysqld.log
+pid-file=/mysql/data/mysql3306/pid/mysqld.pid
+port=3306
+default-time_zone='+8:00'
+default_authentication_plugin=mysql_native_password # 加此参数可远程登陆
+transaction_isolation=READ-COMMITTED
+max_connections=1500
+back_log=500
+wait_timeout=1800
+max_user_connections=800
+innodb_buffer_pool_size=1024M
+innodb_log_file_size=512M
+innodb_log_buffer_size=40M
+slow_query_log=ON
+long_query_time=5
+# log settings #
+slow_query_log = ON
+slow_query_log_file = /mysql/data/mysql3306/slowlog/slow3306.log
+log_error = /mysql/data/mysql3306/errlog/err3306.log
+log_error_verbosity = 3
+log_bin = /mysql/data/mysql3306/binlog/mysql_bin
+log_bin_index = /mysql/data/mysql3306/binlog/mysql_binlog.index
+general_log_file = /data/mysql/mysql3306/generallog/general.log
+log_queries_not_using_indexes = 1
+log_slow_admin_statements = 1
+expire_logs_days = 90
+binlog_expire_logs_seconds = 2592000      #30d
+long_query_time = 2
+min_examined_row_limit = 100
+log_throttle_queries_not_using_indexes = 1000
+innodb_flush_log_at_trx_commit=1
+log_bin_trust_function_creators=1
+
+EOF
+
+5.数据库初始化
+mysql用户操作：
+mysqld --defaults-file=/mysql/conf/my3306.cnf --initialize --user=mysql --basedir=/mysql/app/mysql8.0.27 \
+--datadir=/mysql/data/mysql3306/data/
+
+## 启动Mysql
+[mysql@jeames ~]$ mysqld_safe --defaults-file=/mysql/conf/my3306.cnf --user=mysql &
+[1] 46477
+[mysql@jeames ~]$ 2022-09-17T11:34:40.938667Z mysqld_safe Logging to '/mysql/data/mysql3306/errlog/err3306.log'.
+2022-09-17T11:34:40.974295Z mysqld_safe Starting mysqld daemon with databases from /mysql/data/mysql3306/data
+```
+
+### ✨ 5.2 创建用户配置参数
+
+```bash
+1.登陆MySQL
+第一次登录 MySQL 时，需要到错误日志下找初始化密码
+[mysql@jeames ~]$ cat /mysql/data/mysql3306/errlog/err3306.log | grep password
+此处通过sock登陆
+[mysql@jeames ~]$ mysql -uroot -p  -P 3306 -S /tmp/mysql.sock
+mysql> alter user root@'localhost' identified by 'root';
+mysql> flush privileges
+mysql> status
+--------------
+mysql  Ver 8.0.27 for Linux on x86_64 (MySQL Community Server - GPL)
+
+Connection id:          8
+Current database:
+Current user:           root@localhost
+SSL:                    Not in use
+Current pager:          stdout
+Using outfile:          ''
+Using delimiter:        ;
+Server version:         8.0.27
+Protocol version:       10
+Connection:             Localhost via UNIX socket
+Server characterset:    utf8mb4
+Db     characterset:    utf8mb4
+Client characterset:    utf8mb4
+Conn.  characterset:    utf8mb4
+UNIX socket:            /mysql/data/mysql3306/socket/mysql.sock
+Binary data as:         Hexadecimal
+Uptime:                 3 min 56 sec
+
+Threads: 2  Questions: 8  Slow queries: 0  Opens: 399  Flush tables: 3  Open tables: 37  Queries per second avg: 0.033
+
+
+2.新增用戶
+mysql> create database zabbix character set utf8mb4 collate utf8mb4_bin;
+mysql> create user zabbix@localhost identified by 'Jeames@007';
+mysql> grant all privileges on zabbix.* to zabbix@localhost;
+mysql> set global log_bin_trust_function_creators = 1;
+mysql> flush privileges;
+mysql> quit;
+```
+
+### ✨ 5.3 导入初始架构和数据
+
+```bash
+[root@jeames ~]# chmod -R 777 zabbix-6.0.8
+[root@jeames ~]# chown -R mysql:mysql zabbix-6.0.8
+
+[root@jeames mysql]# cp data.sql images.sql schema.sql /home/mysql
+[root@jeames mysql]# pwd
+/root/zabbix-6.0.8/database/mysql
+
+[mysql@jeames ~]$ mysql -uroot -p
+mysql> show databases;
+mysql> use zabbix;
+
+mysql> source schema.sql
+mysql> source images.sql
+mysql> source data.sql
+
+mysql> SELECT COUNT(*) TABLES, table_schema FROM information_schema.TABLES 
+    -> WHERE table_schema = 'zabbix';
++--------+--------------+
+| TABLES | TABLE_SCHEMA |
++--------+--------------+
+|    173 | zabbix       |
++--------+--------------+
+1 row in set (0.00 sec)
+```
+### ✨ 5.4 Zabbix server配置数据库
+
+```bash
+编辑配置文件，默认目录在/usr/local/etc
+#这个要输入的密码就是在MySQL中创建zabbix数据配置的密码
+DBPassword=Jeames@007
+
+快捷的方法用以下命令
+[root@jeames ~]# sed -ri.bak '/# DBPassword=/cDBPassword=Jeames@007' /usr/local/etc/zabbix_server.conf
+[root@jeames ~]# more /usr/local/etc/zabbix_server.conf | grep DBPassword
+### Option: DBPassword
+DBPassword=Jeames@007
+#       This option can only be used if DBUser and DBPassword are not specified.
+
+
+配置文件说明：
+DBHost=192.168.1.30      #你安装数据库的机器ip
+DBName=zabbix            #你安装数据库的zabbix库
+DBUser=zabbix            #你安装数据库的zabbix用户
+DBPassword=zabbix        #你安装数据库的zabbix用户密码
+
+[root@jeames ~]# vi /usr/local/etc/zabbix_server.conf
+##以下是socket路径,需要注意
+SocketDir=/tmp
+DBSocket=/tmp/mysql.sock
+```
+
+## 📢 6 安装Web interface
+
+```bash
+1.首先要安装服务
+yum -y install httpd
+
+配置文件是
+/etc/httpd/conf/httpd.conf
+/var/www/html
+
+2.设置开机自启动
+systemctl daemon-reload
+systemctl enable httpd.service
+systemctl start httpd.service
+
+## 复制
+[root@jeames ~]# cd /var/www/html
+[root@jeames html]# mkdir zabbix
+[root@jeames ~]# cd zabbix-6.2.2/ui
+[root@jeames ~]# cp * -r /var/www/html/zabbix
+
+[root@jeames ~]# systemctl restart httpd.service
+
+
+#访问授权zabbix
+chmod -R 755 /var/www/html/zabbix/
+
+浏览器：http://192.168.1.30/zabbix/setup.php
+
+3 重启PHP
+killall php-fpm
+php-fpm
+netstat -antp | grep php-fpm
+tail -f /usr/local/php7/var/log/php-fpm.log
+netstat -tln | grep 9000
+netstat -tln | grep 80
+
+
+4.配置Apache解析PHP文件
+#配置Apache解析PHP
+vim /etc/httpd/conf.d/php-fpm.conf
+<FilesMatch \.php$>
+        SetHandler "proxy:fcgi://127.0.0.1:9000"
+</FilesMatch>
+
+
+5.UI界面（图形化加载）
+[root@jeames php-fpm.d]# chown apache:apache /var/www/html -R
+[root@jeames php-fpm.d]# service httpd restart
+
+http://192.168.1.30/zabbix/setup.php
+```
+![在这里插入图片描述](https://img-blog.csdnimg.cn/80553ca5ff694f3bb8f5ca5504d28306.png)
+![在这里插入图片描述](https://img-blog.csdnimg.cn/5b02ffd195bc495395ec1d71c02bc7e3.png)
+![在这里插入图片描述](https://img-blog.csdnimg.cn/d656dbe00a6f4d5fa0098a64900087f4.png)
+![在这里插入图片描述](https://img-blog.csdnimg.cn/a36a72573d0d461fa69d95935e4aef66.png)
+![在这里插入图片描述](https://img-blog.csdnimg.cn/0a08447a05ef49f4a6893e5a9c6931b6.png)
+![在这里插入图片描述](https://img-blog.csdnimg.cn/ef8ac14bd41347a2a652ac22463fb97e.png)
+![在这里插入图片描述](https://img-blog.csdnimg.cn/11d5cdf8ad134989ae1530723f83c968.png)
+## 📢 7 启动Zabbix相关进程
+
+```bash
+[root@jeames ~]# which zabbix_server
+/usr/local/sbin/zabbix_server
+[root@jeames ~]# which zabbix_agentd
+/usr/local/sbin/zabbix_agentd
+
+1.启动Zabbix server和agent进程
+[root@jeames ~]# zabbix_server
+[root@jeames ~]# ps -ef |grep zabbix
+zabbix    48658      1  0 20:54 ?        00:00:00 zabbix_server
+zabbix    48663      1  0 20:55 ?        00:00:00 zabbix_agentd
+zabbix    48664  48663  0 20:55 ?        00:00:00 zabbix_agentd: collector [idle 1 sec]
+zabbix    48665  48663  0 20:55 ?        00:00:00 zabbix_agentd: listener #1 [waiting for connection]
+zabbix    48666  48663  0 20:55 ?        00:00:00 zabbix_agentd: listener #2 [waiting for connection]
+zabbix    48667  48663  0 20:55 ?        00:00:00 zabbix_agentd: listener #3 [waiting for connection]
+zabbix    48668  48663  0 20:55 ?        00:00:00 zabbix_agentd: active checks #1 [idle 1 sec]
+root      48682  46377  0 20:56 pts/1    00:00:00 grep --color=auto zabbix
+
+[root@jeames ~]# zabbix_agentd
+[root@jeames ~]# ps -ef | grep zabbix_agentd
+zabbix    48663      1  0 20:55 ?        00:00:00 zabbix_agentd
+zabbix    48664  48663  0 20:55 ?        00:00:00 zabbix_agentd: collector [idle 1 sec]
+zabbix    48665  48663  0 20:55 ?        00:00:00 zabbix_agentd: listener #1 [waiting for connection]
+zabbix    48666  48663  0 20:55 ?        00:00:00 zabbix_agentd: listener #2 [waiting for connection]
+zabbix    48667  48663  0 20:55 ?        00:00:00 zabbix_agentd: listener #3 [waiting for connection]
+zabbix    48668  48663  0 20:55 ?        00:00:00 zabbix_agentd: active checks #1 [idle 1 sec]
+root      48692  46377  0 20:57 pts/1    00:00:00 grep --color=auto zabbix_agentd
+
+[root@jeames ~]# netstat -antp | grep zabbix
+tcp        0      0 0.0.0.0:10050           0.0.0.0:*               LISTEN      48663/zabbix_agentd 
+tcp6       0      0 :::10050                :::*                    LISTEN      48663/zabbix_agentd
+
+#查看运行日记
+find / -name zabbix_server.log
+tail -f /tmp/zabbix_server.log
+```
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/2ea9c5732efe4ce9a2ae0b9783d56dac.png)
+
+![在这里插入图片描述](https://img-blog.csdnimg.cn/e37a2fad285741788129e19218f87e69.gif#pic_center)
