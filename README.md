@@ -1,5 +1,8 @@
 # 1.install_database
+
 数据库一键安装脚本 
+
+全栈适配MySQL/Oracle/PostgreSQL/SQL server，3分钟极速部署，传统耗时砍掉95%，老板连夜要求全员掌握。
 
 -----------------------------------------------------
 OracleShellInstall.sh
@@ -65,6 +68,6 @@ https://learn.microsoft.com/zh-cn/
 
 # 2.backup_database
 
-全栈适配MySQL/Oracle/PostgreSQL/SQL server，3分钟极速部署，传统耗时砍掉95%，老板连夜要求全员掌握。
+在日常运行过程中，为防止出现数据库故障、病毒或者用户操作不当而导致数据丢失，必须要有良好的备份方案，特分享主流数据库的Shell脚本给大家。
 
 
