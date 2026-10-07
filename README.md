@@ -71,3 +71,9 @@ https://learn.microsoft.com/zh-cn/
 在日常运行过程中，为防止出现数据库故障、病毒或者用户操作不当而导致数据丢失，必须要有良好的备份方案，特分享主流数据库的Shell脚本给大家。
 
 
+# 3.health_check_database
+今天分享一个极简却高效的秘诀：直接用SQL拼接HTML，实现MySQL/Oracle/PostgreSQL/SQL server巡检报告！ 核心优势？快！快到飞起！
+
+
+
+
