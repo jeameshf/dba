@@ -61,3 +61,10 @@ MssqlShellInstall.sh
 https://learn.microsoft.com/zh-cn/
 
 直接执行脚本，自动化安装，本脚本适用于Linux7,其他操作系统可能涉及yum的配置不同，请自行修改
+
+
+# 2.backup_database
+
+全栈适配MySQL/Oracle/PostgreSQL/SQL server，3分钟极速部署，传统耗时砍掉95%，老板连夜要求全员掌握。
+
+
